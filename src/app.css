@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-dot: #00000022;
+    --neo-bg: #f8f8f5;
+  }
+
+  body {
+    background-color: var(--neo-bg);
+    background-image: radial-gradient(var(--bg-dot) 1.5px, transparent 1.5px);
+    background-size: 22px 22px;
+    color: #050505;
+    font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+
+  code, kbd, samp, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  }
+
+  /* Sharp corners everywhere for authentic Neo-Brutalism */
+  * {
+    border-radius: 0 !important;
+  }
+}
+
+/* Custom Neo-Brutalist utility classes */
+.neo-border {
+  border: 2.5px solid #000000;
+}
+
+.neo-border-thick {
+  border: 3.5px solid #000000;
+}
+
+.neo-shadow {
+  box-shadow: 4px 4px 0px #000000;
+}
+
+.neo-shadow-sm {
+  box-shadow: 2px 2px 0px #000000;
+}
+
+.neo-shadow-lg {
+  box-shadow: 6px 6px 0px #000000;
+}
+
+.neo-btn {
+  border: 2.5px solid #000000;
+  box-shadow: 3px 3px 0px #000000;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+.neo-btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0px #000000;
+}
+
+.neo-btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #000000;
+}
+
+.neo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: 2px 2px 0px #666666;
+}
+
+.neo-card {
+  background-color: #ffffff;
+  border: 2.5px solid #000000;
+  box-shadow: 4px 4px 0px #000000;
+}
+
+/* Custom scanline animation for camera view */
+@keyframes scanline {
+  0% { transform: translateY(0%); }
+  100% { transform: translateY(1000%); }
+}
+
+.scanline-overlay {
+  background: linear-gradient(to bottom, transparent 50%, rgba(0, 255, 136, 0.25) 51%, transparent 52%);
+  background-size: 100% 8px;
+  pointer-events: none;
+}
