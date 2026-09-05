@@ -26,6 +26,7 @@
   let streamIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // Scanner Receiver State
+  let scannerFacingMode: 'environment' | 'user' = $state('environment');
   let scannerVideoEl: HTMLVideoElement | null = $state(null);
   let scanCanvas: HTMLCanvasElement | null = null;
   let isScannerActive = $state(false);
@@ -98,7 +99,7 @@
   async function startScanner(): Promise<void> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: { facingMode: { ideal: scannerFacingMode } },
       });
       if (scannerVideoEl) {
         scannerVideoEl.srcObject = stream;
@@ -108,18 +109,42 @@
         scanQrLoop();
         onNotify({
           title: 'QR SCANNER RUNNING',
-          message: 'Point camera at the animated QR burst on the sender screen.',
+          message: `Camera (${scannerFacingMode === 'environment' ? 'Rear' : 'Front'}) scanning dynamic QR frames.`,
           type: 'success',
         });
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Camera error';
-      onNotify({
-        title: 'SCANNER ERROR',
-        message: `Failed to open camera: ${msg}`,
-        type: 'error',
-      });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (scannerVideoEl) {
+          scannerVideoEl.srcObject = stream;
+          await scannerVideoEl.play();
+          isScannerActive = true;
+          scannedChunksMap = {};
+          scanQrLoop();
+        }
+      } catch (fallbackErr: unknown) {
+        const msg = err instanceof Error ? err.message : 'Camera error';
+        onNotify({
+          title: 'SCANNER ERROR',
+          message: `Failed to open camera: ${msg}`,
+          type: 'error',
+        });
+      }
     }
+  }
+
+  async function toggleScannerCameraFacing(): Promise<void> {
+    scannerFacingMode = scannerFacingMode === 'environment' ? 'user' : 'environment';
+    if (isScannerActive) {
+      stopScanner();
+      await startScanner();
+    }
+    onNotify({
+      title: 'CAMERA SWITCHED',
+      message: `Scanner camera set to ${scannerFacingMode === 'environment' ? 'Rear (Back)' : 'Front (Selfie)'}.`,
+      type: 'info',
+    });
   }
 
   function stopScanner(): void {
@@ -332,20 +357,32 @@
           badgeText={isScannerActive ? 'ACTIVE' : 'OFFLINE'}
           badgeColor={isScannerActive ? 'mint' : 'pink'}
         >
+          {#snippet headerAction()}
+            <NeoButton
+              variant="white"
+              size="sm"
+              onclick={toggleScannerCameraFacing}
+              className="text-[10px] py-1 px-2.5"
+            >
+              <Icons name="refresh" size={12} />
+              {scannerFacingMode === 'environment' ? '📷 REAR' : '🤳 FRONT'}
+            </NeoButton>
+          {/snippet}
+
           <div class="space-y-4">
             <div class="relative border-[2.5px] border-black bg-black aspect-video overflow-hidden flex items-center justify-center">
               <video
                 bind:this={scannerVideoEl}
                 playsinline
                 muted
-                class="w-full h-full object-cover"
+                class="w-full h-full object-cover {scannerFacingMode === 'user' ? 'mirror' : ''}"
               ></video>
 
               {#if !isScannerActive}
                 <div class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-neutral-900 text-white font-mono text-xs">
                   <Icons name="camera" size={36} className="mb-2 text-[#00FF88]" />
                   <span class="font-bold text-sm mb-1">SCANNER CAMERA OFFLINE</span>
-                  <span class="text-neutral-400">Click below to activate camera and scan dynamic QR stream.</span>
+                  <span class="text-neutral-400">Direction: {scannerFacingMode === 'environment' ? 'Rear (Back)' : 'Front (Selfie)'}. Click below to activate.</span>
                 </div>
               {:else}
                 <!-- Target Reticle Box -->
@@ -427,3 +464,9 @@
   onClose={() => (isCompilationModalOpen = false)}
   onCopy={copyAssembledText}
 />
+
+<style>
+  .mirror {
+    transform: scaleX(-1);
+  }
+</style>

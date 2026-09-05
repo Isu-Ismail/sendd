@@ -41,14 +41,16 @@
   let currentBitProgress = $state(0);
   let abortTransmission = false;
 
-  // Sender Front Camera QR Scanner (To read laptop screen feedback)
-  let frontVideoEl: HTMLVideoElement | null = $state(null);
+  // Sender Camera Scanner (To read laptop screen feedback)
+  let senderFacingMode: 'environment' | 'user' = $state('environment');
+  let senderVideoEl: HTMLVideoElement | null = $state(null);
   let qrScanCanvas: HTMLCanvasElement | null = null;
   let qrScanAnimId: number | null = null;
   let lastScannedAck = $state('');
-  let isFrontCameraRunning = $state(false);
+  let isSenderCameraRunning = $state(false);
 
   // Receiver State
+  let receiverFacingMode: 'user' | 'environment' = $state('user');
   let receiverPhase: ReceiverPhase = $state('idle');
   let receiverVideoEl: HTMLVideoElement | null = $state(null);
   let receiverEngine: OpticalReceiverEngine | null = null;
@@ -106,7 +108,7 @@
   onDestroy(() => {
     stopSenderTransmission();
     stopReceiver();
-    stopFrontCameraScanner();
+    stopSenderCameraScanner();
   });
 
   /* ========================================================================= */
@@ -135,48 +137,71 @@
     }
   }
 
-  async function startFrontCameraScanner(): Promise<void> {
+  async function startSenderCameraScanner(): Promise<void> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' },
+        video: { facingMode: { ideal: senderFacingMode } },
       });
-      if (frontVideoEl) {
-        frontVideoEl.srcObject = stream;
-        await frontVideoEl.play();
-        isFrontCameraRunning = true;
+      if (senderVideoEl) {
+        senderVideoEl.srcObject = stream;
+        await senderVideoEl.play();
+        isSenderCameraRunning = true;
         scanQrLoop();
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Camera error';
-      onNotify({
-        title: 'FRONT CAMERA ERROR',
-        message: `Could not start selfie camera for QR reading: ${msg}`,
-        type: 'warning',
-      });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (senderVideoEl) {
+          senderVideoEl.srcObject = stream;
+          await senderVideoEl.play();
+          isSenderCameraRunning = true;
+          scanQrLoop();
+        }
+      } catch (fallbackErr: unknown) {
+        const msg = err instanceof Error ? err.message : 'Camera error';
+        onNotify({
+          title: 'CAMERA ERROR',
+          message: `Could not start ${senderFacingMode === 'environment' ? 'rear' : 'front'} camera: ${msg}`,
+          type: 'warning',
+        });
+      }
     }
   }
 
-  function stopFrontCameraScanner(): void {
+  function stopSenderCameraScanner(): void {
     if (qrScanAnimId !== null) {
       cancelAnimationFrame(qrScanAnimId);
       qrScanAnimId = null;
     }
-    if (frontVideoEl && frontVideoEl.srcObject instanceof MediaStream) {
-      frontVideoEl.srcObject.getTracks().forEach((t) => t.stop());
-      frontVideoEl.srcObject = null;
+    if (senderVideoEl && senderVideoEl.srcObject instanceof MediaStream) {
+      senderVideoEl.srcObject.getTracks().forEach((t) => t.stop());
+      senderVideoEl.srcObject = null;
     }
-    isFrontCameraRunning = false;
+    isSenderCameraRunning = false;
+  }
+
+  async function toggleSenderCameraFacing(): Promise<void> {
+    senderFacingMode = senderFacingMode === 'environment' ? 'user' : 'environment';
+    if (isSenderCameraRunning) {
+      stopSenderCameraScanner();
+      await startSenderCameraScanner();
+    }
+    onNotify({
+      title: 'CAMERA DIRECTION SWITCHED',
+      message: `Sender camera set to ${senderFacingMode === 'environment' ? 'Rear (Back)' : 'Front (Selfie)'}.`,
+      type: 'info',
+    });
   }
 
   function scanQrLoop(): void {
-    if (!frontVideoEl || !qrScanCanvas || frontVideoEl.readyState < 2) {
+    if (!senderVideoEl || !qrScanCanvas || senderVideoEl.readyState < 2) {
       qrScanAnimId = requestAnimationFrame(scanQrLoop);
       return;
     }
 
     const ctx = qrScanCanvas.getContext('2d', { willReadFrequently: true });
     if (ctx) {
-      ctx.drawImage(frontVideoEl, 0, 0, qrScanCanvas.width, qrScanCanvas.height);
+      ctx.drawImage(senderVideoEl, 0, 0, qrScanCanvas.width, qrScanCanvas.height);
       const imgData = ctx.getImageData(0, 0, qrScanCanvas.width, qrScanCanvas.height);
       const code = jsQR(imgData.data, imgData.width, imgData.height, {
         inversionAttempts: 'dontInvert',
@@ -223,7 +248,7 @@
 
     abortTransmission = false;
     await initSenderTorch();
-    await startFrontCameraScanner();
+    await startSenderCameraScanner();
 
     // Reset chunks state
     chunks.forEach((c) => (c.state = 'pending'));
@@ -249,7 +274,7 @@
 
       if (!finished || abortTransmission) break;
 
-      // Await ACK from Laptop Screen QR via Front Camera
+      // Await ACK from Laptop Screen QR via Feedback Camera
       senderPhase = 'awaiting_ack';
       const ackReceived = await waitForChunkAck(i, 4500);
 
@@ -312,7 +337,7 @@
       torchController = null;
     }
     isScreenStrobeOn = false;
-    stopFrontCameraScanner();
+    stopSenderCameraScanner();
   }
 
   /* ========================================================================= */
@@ -322,7 +347,11 @@
   async function startReceiver(): Promise<void> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        video: {
+          facingMode: { ideal: receiverFacingMode },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
       });
 
       if (receiverVideoEl) {
@@ -336,18 +365,44 @@
 
         onNotify({
           title: 'RECEIVER ONLINE',
-          message: 'Webcam calibrated. Aim phone flashlight directly at camera lens.',
+          message: `Camera active (${receiverFacingMode === 'user' ? 'Front' : 'Rear'}). Aim light pulses at lens.`,
           type: 'success',
         });
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Camera permission denied';
-      onNotify({
-        title: 'RECEIVER ERROR',
-        message: `Failed to access webcam: ${msg}`,
-        type: 'error',
-      });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (receiverVideoEl) {
+          receiverVideoEl.srcObject = stream;
+          await receiverVideoEl.play();
+          receiverEngine?.start(receiverVideoEl);
+          receiverPhase = 'listening';
+          currentAckQrData = 'READY';
+          receivedChunksMap = {};
+          rawBitBuffer = '';
+        }
+      } catch (fallbackErr: unknown) {
+        const msg = err instanceof Error ? err.message : 'Camera permission denied';
+        onNotify({
+          title: 'RECEIVER ERROR',
+          message: `Failed to access webcam: ${msg}`,
+          type: 'error',
+        });
+      }
     }
+  }
+
+  async function toggleReceiverCameraFacing(): Promise<void> {
+    receiverFacingMode = receiverFacingMode === 'user' ? 'environment' : 'user';
+    if (receiverPhase !== 'idle') {
+      stopReceiver();
+      await startReceiver();
+    }
+    onNotify({
+      title: 'RECEIVER CAMERA FLIPPED',
+      message: `Receiver camera set to ${receiverFacingMode === 'user' ? 'Front (User)' : 'Rear (Environment)'}.`,
+      type: 'info',
+    });
   }
 
   function stopReceiver(): void {
@@ -564,26 +619,41 @@
         <ChunkMatrix {chunks} {activeChunkIndex} />
       </div>
 
-      <!-- Right Column: Front Camera QR Feedback Reader & Status -->
+      <!-- Right Column: Camera QR Feedback Reader & Status -->
       <div class="lg:col-span-5 space-y-6">
         <NeoCard
-          title="FRONT CAMERA QR FEEDBACK"
-          badgeText={isFrontCameraRunning ? 'SCANNING' : 'OFFLINE'}
-          badgeColor={isFrontCameraRunning ? 'mint' : 'pink'}
+          title="FEEDBACK CAMERA QR SCANNER"
+          badgeText={isSenderCameraRunning ? 'SCANNING' : 'OFFLINE'}
+          badgeColor={isSenderCameraRunning ? 'mint' : 'pink'}
         >
+          {#snippet headerAction()}
+            <NeoButton
+              variant="white"
+              size="sm"
+              onclick={toggleSenderCameraFacing}
+              className="text-[10px] py-1 px-2.5"
+            >
+              <Icons name="refresh" size={12} />
+              {senderFacingMode === 'environment' ? '📷 REAR' : '🤳 FRONT'}
+            </NeoButton>
+          {/snippet}
+
           <div class="space-y-3">
             <div class="relative border-[2px] border-black bg-neutral-900 aspect-video overflow-hidden flex items-center justify-center">
               <video
-                bind:this={frontVideoEl}
+                bind:this={senderVideoEl}
                 playsinline
                 muted
-                class="w-full h-full object-cover mirror"
+                class="w-full h-full object-cover {senderFacingMode === 'user' ? 'mirror' : ''}"
               ></video>
 
-              {#if !isFrontCameraRunning}
+              {#if !isSenderCameraRunning}
                 <div class="absolute inset-0 flex flex-col items-center justify-center text-center p-4 bg-neutral-900 text-white font-mono text-xs">
                   <Icons name="camera" size={28} className="mb-2 text-[#FFE600]" />
-                  <span>Selfie Camera will activate when transmission starts.</span>
+                  <span class="font-bold">Camera is currently inactive.</span>
+                  <span class="text-neutral-400 text-[10px] mt-0.5">
+                    Using: {senderFacingMode === 'environment' ? 'Rear (Back)' : 'Front (Selfie)'} Camera
+                  </span>
                 </div>
               {:else}
                 <!-- Target Reticle Box -->
@@ -593,8 +663,38 @@
               {/if}
             </div>
 
+            <!-- Manual Camera Preview Toggle -->
+            {#if !isSenderCameraRunning}
+              <NeoButton
+                variant="white"
+                size="sm"
+                className="w-full"
+                onclick={startSenderCameraScanner}
+              >
+                <Icons name="camera" size={14} />
+                TEST / PREVIEW {senderFacingMode === 'environment' ? 'REAR' : 'FRONT'} CAMERA
+              </NeoButton>
+            {:else if senderPhase === 'idle' || senderPhase === 'completed'}
+              <NeoButton
+                variant="pink"
+                size="sm"
+                className="w-full"
+                onclick={stopSenderCameraScanner}
+              >
+                <Icons name="x" size={14} />
+                STOP CAMERA PREVIEW
+              </NeoButton>
+            {/if}
+
             <!-- Feedback Telemetry -->
             <div class="border-[1.5px] border-black p-2.5 bg-neutral-50 space-y-2 font-mono text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-neutral-600 font-bold uppercase">ACTIVE DIRECTION:</span>
+                <NeoBadge variant="yellow">
+                  {senderFacingMode === 'environment' ? 'REAR CAMERA' : 'FRONT CAMERA'}
+                </NeoBadge>
+              </div>
+
               <div class="flex items-center justify-between">
                 <span class="text-neutral-600 font-bold uppercase">LAST SCANNED QR:</span>
                 <NeoBadge variant={lastScannedAck.startsWith('ACK:') ? 'mint' : lastScannedAck === 'DONE' ? 'cyan' : 'yellow'}>
@@ -627,24 +727,36 @@
       <!-- Left Column: Webcam Receiver & Oscilloscope -->
       <div class="lg:col-span-7 space-y-6">
         <NeoCard
-          title="OPTICAL RECEIVER (LAPTOP WEBCAM)"
+          title="OPTICAL RECEIVER (WEBCAM / SENSOR)"
           badgeText={receiverPhase !== 'idle' ? 'ACTIVE' : 'STANDBY'}
           badgeColor={receiverPhase !== 'idle' ? 'mint' : 'yellow'}
         >
+          {#snippet headerAction()}
+            <NeoButton
+              variant="white"
+              size="sm"
+              onclick={toggleReceiverCameraFacing}
+              className="text-[10px] py-1 px-2.5"
+            >
+              <Icons name="refresh" size={12} />
+              {receiverFacingMode === 'user' ? '🤳 FRONT' : '📷 REAR'}
+            </NeoButton>
+          {/snippet}
+
           <div class="space-y-4">
             <div class="relative border-[2.5px] border-black bg-black aspect-video overflow-hidden flex items-center justify-center">
               <video
                 bind:this={receiverVideoEl}
                 playsinline
                 muted
-                class="w-full h-full object-cover"
+                class="w-full h-full object-cover {receiverFacingMode === 'user' ? 'mirror' : ''}"
               ></video>
 
               {#if receiverPhase === 'idle'}
                 <div class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-neutral-900 text-white font-mono text-xs">
                   <Icons name="camera" size={36} className="mb-2 text-[#00F0FF]" />
-                  <span class="font-bold text-sm mb-1">WEBCAM RECEIVER OFFLINE</span>
-                  <span class="text-neutral-400">Click below to activate optical luminance detection.</span>
+                  <span class="font-bold text-sm mb-1">OPTICAL RECEIVER OFFLINE</span>
+                  <span class="text-neutral-400">Direction: {receiverFacingMode === 'user' ? 'Front' : 'Rear'}. Click below to activate.</span>
                 </div>
               {:else}
                 <!-- Center Region of Interest (ROI) Reticle -->
@@ -668,7 +780,7 @@
                   onclick={startReceiver}
                 >
                   <Icons name="play" size={16} />
-                  ACTIVATE WEBCAM RECEIVER
+                  ACTIVATE OPTICAL RECEIVER
                 </NeoButton>
               {:else}
                 <NeoButton
